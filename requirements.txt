@@ -1,0 +1,6 @@
+langchain>=1.0
+langgraph
+langchain-ollama
+langchain-groq
+python-dotenv
+mcp>=2.1
