@@ -1,13 +1,8 @@
-"""
-Crew MCP CLIENT — talks to mcp_server/work_mcp.py over stdio.
-
-Research agent uses call_mcp_tool("search_docs", ...) so tools
-really go through MCP (P04), not a hidden direct import.
-"""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -21,10 +16,7 @@ SRC = Path(__file__).resolve().parent
 
 def _server() -> StdioServerParameters:
     env = os.environ.copy()
-    # Child process must import rag/ and mcp_server/
-    env["PYTHONPATH"] = str(SRC) + (
-        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
-    )
+    env["PYTHONPATH"] = str(SRC)
     return StdioServerParameters(
         command=sys.executable,
         args=["-m", "mcp_server.work_mcp"],
@@ -33,48 +25,26 @@ def _server() -> StdioServerParameters:
     )
 
 
-def _text_from_result(result) -> str:
-    """Normalize MCP CallToolResult into a plain string (often JSON)."""
-    structured = getattr(result, "structured_content", None)
-    if structured is not None:
-        # Some MCP servers wrap as {"result": "<json string>"}
-        if isinstance(structured, dict) and "result" in structured and len(structured) == 1:
-            return str(structured["result"])
-        if isinstance(structured, (dict, list)):
-            import json
-
-            return json.dumps(structured)
-        return str(structured)
-
-    parts = []
-    for block in result.content or []:
-        text = getattr(block, "text", None)
-        parts.append(text if text is not None else str(block))
-    return "\n".join(parts) if parts else str(result)
+def _to_text(result) -> str:
+    data = getattr(result, "structured_content", None)
+    if isinstance(data, dict) and "result" in data and len(data) == 1:
+        return str(data["result"])
+    if isinstance(data, (dict, list)):
+        return json.dumps(data)
+    if data is not None:
+        return str(data)
+    parts = [getattr(b, "text", None) or str(b) for b in (result.content or [])]
+    return "\n".join(parts)
 
 
-async def _list_tools_async() -> list[str]:
+async def _call(name: str, args: dict) -> str:
     async with Client(_server()) as client:
-        listed = await client.list_tools()
-        return [t.name for t in listed.tools]
-
-
-async def _call_tool_async(name: str, arguments: dict) -> str:
-    async with Client(_server()) as client:
-        result = await client.call_tool(name, arguments or {})
-        return _text_from_result(result)
-
-
-def list_tool_names() -> list[str]:
-    return asyncio.run(_list_tools_async())
+        return _to_text(await client.call_tool(name, args or {}))
 
 
 def call_mcp_tool(name: str, arguments: dict | None = None) -> str:
-    """Call one MCP tool and return plain text / stringified JSON."""
-    return asyncio.run(_call_tool_async(name, arguments or {}))
+    return asyncio.run(_call(name, arguments or {}))
 
 
 if __name__ == "__main__":
-    print("Tools:", list_tool_names())
-    print()
     print(call_mcp_tool("search_docs", {"query": "refund", "k": 2}))
